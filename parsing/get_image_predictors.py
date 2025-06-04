@@ -5,7 +5,7 @@ from PIL import Image, ImageStat
 from io import BytesIO
 import cv2
 import ast
-#from tqdm import tqdm
+from tqdm import tqdm
 import warnings
 import re
 from urllib.parse import urlparse, parse_qs
