@@ -11,23 +11,30 @@ import joblib
 import warnings
 import pandas as pd
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 from functools import partial
 import time
+import traceback
 warnings.filterwarnings('ignore')
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-N_JOBS = mp.cpu_count() - 1
+
+N_JOBS = max(1, mp.cpu_count() - 2) 
 print(f"Используется {N_JOBS} ядер для параллелизации")
 
 print("Загрузка данных...")
-X_train = pd.read_csv('X_cl_train.csv')
-X_val = pd.read_csv('X_cl_val.csv')
-X_test = pd.read_csv('X_cl_test.csv')
-y_train = pd.read_csv('y_cl_train.csv').iloc[:, 0]
-y_val = pd.read_csv('y_cl_val.csv').iloc[:, 0]
-y_test = pd.read_csv('y_cl_test.csv').iloc[:, 0]
+try:
+    X_train = pd.read_csv('X_cl_train.csv')
+    X_val = pd.read_csv('X_cl_val.csv')
+    X_test = pd.read_csv('X_cl_test.csv')
+    y_train = pd.read_csv('y_cl_train.csv').iloc[:, 0]
+    y_val = pd.read_csv('y_cl_val.csv').iloc[:, 0]
+    y_test = pd.read_csv('y_cl_test.csv').iloc[:, 0]
+except Exception as e:
+    print(f"Ошибка загрузки данных: {e}")
+    exit(1)
+
 
 X_combined = pd.concat([X_train, X_val], axis=0, ignore_index=True)
 y_combined = pd.concat([y_train, y_val], axis=0, ignore_index=True)
@@ -39,21 +46,24 @@ print(f"Распределение классов: {y_combined.value_counts().to
 class_weights = compute_class_weight('balanced', classes=np.unique(y_combined), y=y_combined)
 class_weight_dict = {i: class_weights[i] for i in range(len(class_weights))}
 
-
 cv_strategy = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
 
 def calculate_metrics(y_true, y_pred, y_pred_proba):
     """Быстрое вычисление основных метрик"""
-    return {
-        'accuracy': accuracy_score(y_true, y_pred),
-        'precision': precision_score(y_true, y_pred, average='weighted'),
-        'recall': recall_score(y_true, y_pred, average='weighted'),
-        'f1': f1_score(y_true, y_pred, average='weighted'),
-        'auc_roc': roc_auc_score(y_true, y_pred_proba[:, 1]),
-        'auc_pr': average_precision_score(y_true, y_pred_proba[:, 1]),
-        'mcc': matthews_corrcoef(y_true, y_pred),
-        'kappa': cohen_kappa_score(y_true, y_pred)
-    }
+    try:
+        return {
+            'accuracy': accuracy_score(y_true, y_pred),
+            'precision': precision_score(y_true, y_pred, average='weighted'),
+            'recall': recall_score(y_true, y_pred, average='weighted'),
+            'f1': f1_score(y_true, y_pred, average='weighted'),
+            'auc_roc': roc_auc_score(y_true, y_pred_proba[:, 1]),
+            'auc_pr': average_precision_score(y_true, y_pred_proba[:, 1]),
+            'mcc': matthews_corrcoef(y_true, y_pred),
+            'kappa': cohen_kappa_score(y_true, y_pred)
+        }
+    except Exception as e:
+        print(f"Ошибка вычисления метрик: {e}")
+        return {}
 
 def print_results(model_name, metrics):
     """Быстрая печать результатов"""
@@ -64,438 +74,338 @@ def print_results(model_name, metrics):
 
 param_distributions = {
     'RandomForest': {
-        'n_estimators': [50, 100, 200, 300, 500, 700, 1000],
-        'max_depth': [None, 5, 10, 15, 20, 25, 30],
-        'min_samples_split': [2, 5, 10, 15, 20],
-        'min_samples_leaf': [1, 2, 4, 8, 12],
-        'max_features': ['sqrt', 'log2', None, 0.3, 0.5, 0.7],
-        'bootstrap': [True, False],
-        'criterion': ['gini', 'entropy'],
-        'max_leaf_nodes': [None, 10, 20, 50, 100],
-        'min_impurity_decrease': [0.0, 0.01, 0.05, 0.1],
-        'oob_score': [True, False]
-    },
-    'ExtraTrees': {
-        'n_estimators': [50, 100, 200, 300, 500, 700, 1000],
-        'max_depth': [None, 5, 10, 15, 20, 25, 30],
-        'min_samples_split': [2, 5, 10, 15, 20],
-        'min_samples_leaf': [1, 2, 4, 8, 12],
-        'max_features': ['sqrt', 'log2', None, 0.3, 0.5, 0.7],
-        'bootstrap': [True, False],
-        'criterion': ['gini', 'entropy'],
-        'max_leaf_nodes': [None, 10, 20, 50, 100],
-        'min_impurity_decrease': [0.0, 0.01, 0.05, 0.1]
-    },
-    'BaggingClassifier': {
-        'n_estimators': [10, 50, 100, 200, 300, 500],
-        'max_samples': [0.5, 0.7, 0.8, 0.9, 1.0],
-        'max_features': [0.5, 0.7, 0.8, 0.9, 1.0],
-        'bootstrap': [True, False],
-        'bootstrap_features': [True, False],
-        'oob_score': [True, False],
-        'warm_start': [True, False]
-    },
-    'BalancedRandomForest': {
-        'n_estimators': [50, 100, 200, 300, 500, 700],
-        'max_depth': [None, 5, 10, 15, 20, 25],
+        'n_estimators': [100, 200, 300, 500],
+        'max_depth': [None, 10, 15, 20, 25],
         'min_samples_split': [2, 5, 10, 15],
         'min_samples_leaf': [1, 2, 4, 8],
-        'max_features': ['sqrt', 'log2', None, 0.5],
-        'criterion': ['gini', 'entropy'],
-        'sampling_strategy': ['auto', 'balanced', 'balanced_subsample']
+        'max_features': ['sqrt', 'log2', 0.5],
+        'bootstrap': [True],
+        'criterion': ['gini', 'entropy']
+    },
+    'ExtraTrees': {
+        'n_estimators': [100, 200, 300, 500],
+        'max_depth': [None, 10, 15, 20, 25],
+        'min_samples_split': [2, 5, 10, 15],
+        'min_samples_leaf': [1, 2, 4, 8],
+        'max_features': ['sqrt', 'log2', 0.5],
+        'bootstrap': [True, False],
+        'criterion': ['gini', 'entropy']
+    },
+    'BaggingClassifier': {
+        'n_estimators': [50, 100, 200, 300],
+        'max_samples': [0.7, 0.8, 0.9, 1.0],
+        'max_features': [0.7, 0.8, 0.9, 1.0],
+        'bootstrap': [True],
+        'bootstrap_features': [True, False]
     }
 }
 
-def fast_randomized_search(model_name, model_class, param_dist, n_iter=50):
+def fast_randomized_search(model_name, model_class, param_dist, n_iter=20):
     """Быстрый randomized search для предварительной оптимизации"""
     print(f"\nБыстрая оптимизация {model_name}...")
     
-    if model_name == 'RandomForest':
-        model = model_class(
-            random_state=42,
-            class_weight='balanced',
-            n_jobs=1  
-        )
-    elif model_name == 'ExtraTrees':
-        model = model_class(
-            random_state=42,
-            class_weight='balanced',
-            n_jobs=1
-        )
-    elif model_name == 'BaggingClassifier':
-        base_estimator = DecisionTreeClassifier(
-            random_state=42,
-            class_weight='balanced'
-        )
-        model = model_class(
-            base_estimator=base_estimator,
-            random_state=42,
-            n_jobs=1
-        )
-    elif model_name == 'BalancedRandomForest':
-        model = RandomForestClassifier(
-            random_state=42,
-            class_weight='balanced_subsample',
-            n_jobs=1
-        )
-        param_dist = param_distributions['RandomForest'].copy()
-        param_dist['class_weight'] = ['balanced', 'balanced_subsample']
+    try:
+        if model_name == 'RandomForest':
+            model = model_class(
+                random_state=42,
+                class_weight='balanced',
+                n_jobs=1
+            )
+        elif model_name == 'ExtraTrees':
+            model = model_class(
+                random_state=42,
+                class_weight='balanced',
+                n_jobs=1
+            )
+        elif model_name == 'BaggingClassifier':
+            try:
+                base_estimator = DecisionTreeClassifier(
+                    random_state=42,
+                    class_weight='balanced'
+                )
+                model = model_class(
+                    estimator=base_estimator, 
+                    random_state=42,
+                    n_jobs=1
+                )
+            except TypeError:
+                base_estimator = DecisionTreeClassifier(
+                    random_state=42,
+                    class_weight='balanced'
+                )
+                model = model_class(
+                    base_estimator=base_estimator,
+                    random_state=42,
+                    n_jobs=1
+                )
 
-    search = RandomizedSearchCV(
-        model, param_dist, 
-        n_iter=n_iter, 
-        cv=cv_strategy, 
-        scoring='roc_auc',
-        n_jobs=N_JOBS,
-        random_state=42,
-        verbose=0
-    )
-    
-    search.fit(X_combined, y_combined)
-    
-    return search.best_params_, search.best_score_
+        search = RandomizedSearchCV(
+            model, param_dist, 
+            n_iter=n_iter, 
+            cv=cv_strategy, 
+            scoring='roc_auc',
+            n_jobs=min(2, N_JOBS),  
+            random_state=42,
+            verbose=0
+        )
+        
+        search.fit(X_combined, y_combined)
+        
+        return search.best_params_, search.best_score_
+        
+    except Exception as e:
+        print(f"Ошибка в fast_randomized_search для {model_name}: {e}")
+        return {}, 0.0
 
-def optuna_fine_tune(model_name, base_params, n_trials=100):
+def optuna_fine_tune(model_name, base_params, n_trials=30):
     """Тонкая настройка лучших параметров с помощью Optuna"""
     print(f"Тонкая настройка {model_name} с Optuna...")
     
     def objective(trial):
-        if model_name == 'RandomForest':
-            params = base_params.copy()
+        try:
+            if model_name == 'RandomForest':
+                params = base_params.copy()
 
-            if 'n_estimators' in base_params:
-                params['n_estimators'] = trial.suggest_int('n_estimators', 
-                                                         max(50, base_params['n_estimators'] - 100),
-                                                         base_params['n_estimators'] + 200)
-            
-            if 'max_depth' in base_params and base_params['max_depth'] is not None:
-                params['max_depth'] = trial.suggest_int('max_depth',
-                                                      max(5, base_params['max_depth'] - 5),
-                                                      base_params['max_depth'] + 10)
-            
-            if 'min_samples_split' in base_params:
-                params['min_samples_split'] = trial.suggest_int('min_samples_split',
-                                                              max(2, base_params['min_samples_split'] - 3),
-                                                              base_params['min_samples_split'] + 5)
-            
-            if 'min_samples_leaf' in base_params:
-                params['min_samples_leaf'] = trial.suggest_int('min_samples_leaf',
-                                                             max(1, base_params['min_samples_leaf'] - 2),
-                                                             base_params['min_samples_leaf'] + 4)
-            
-            params['min_impurity_decrease'] = trial.suggest_float('min_impurity_decrease', 0.0, 0.1)
-            
-            model = RandomForestClassifier(**params, random_state=42, class_weight='balanced', n_jobs=1)
-            model.fit(X_train, y_train)
-            y_pred_proba = model.predict_proba(X_val)
-            return roc_auc_score(y_val, y_pred_proba[:, 1])
-            
-        elif model_name == 'ExtraTrees':
-            params = base_params.copy()
-            
-            if 'n_estimators' in base_params:
-                params['n_estimators'] = trial.suggest_int('n_estimators',
-                                                         max(50, base_params['n_estimators'] - 100),
-                                                         base_params['n_estimators'] + 200)
-            
-            if 'max_depth' in base_params and base_params['max_depth'] is not None:
-                params['max_depth'] = trial.suggest_int('max_depth',
-                                                      max(5, base_params['max_depth'] - 5),
-                                                      base_params['max_depth'] + 10)
-            
-            if 'min_samples_split' in base_params:
-                params['min_samples_split'] = trial.suggest_int('min_samples_split',
-                                                              max(2, base_params['min_samples_split'] - 3),
-                                                              base_params['min_samples_split'] + 5)
-            
-            params['min_impurity_decrease'] = trial.suggest_float('min_impurity_decrease', 0.0, 0.1)
-            
-            model = ExtraTreesClassifier(**params, random_state=42, class_weight='balanced', n_jobs=1)
-            model.fit(X_train, y_train)
-            y_pred_proba = model.predict_proba(X_val)
-            return roc_auc_score(y_val, y_pred_proba[:, 1])
-            
-        elif model_name == 'BaggingClassifier':
-            params = base_params.copy()
-            
-            if 'n_estimators' in base_params:
-                params['n_estimators'] = trial.suggest_int('n_estimators',
-                                                         max(10, base_params['n_estimators'] - 50),
-                                                         base_params['n_estimators'] + 100)
-            
-            if 'max_samples' in base_params:
-                params['max_samples'] = trial.suggest_float('max_samples',
-                                                          max(0.3, base_params['max_samples'] - 0.2),
-                                                          min(1.0, base_params['max_samples'] + 0.2))
-            
-            if 'max_features' in base_params:
-                params['max_features'] = trial.suggest_float('max_features',
-                                                           max(0.3, base_params['max_features'] - 0.2),
-                                                           min(1.0, base_params['max_features'] + 0.2))
-            
-            base_estimator = DecisionTreeClassifier(random_state=42, class_weight='balanced')
-            model = BaggingClassifier(base_estimator=base_estimator, **params, random_state=42, n_jobs=1)
-            model.fit(X_train, y_train)
-            y_pred_proba = model.predict_proba(X_val)
-            return roc_auc_score(y_val, y_pred_proba[:, 1])
-            
-        elif model_name == 'BalancedRandomForest':
-            params = base_params.copy()
-            
-            if 'n_estimators' in base_params:
-                params['n_estimators'] = trial.suggest_int('n_estimators',
-                                                         max(50, base_params['n_estimators'] - 100),
-                                                         base_params['n_estimators'] + 200)
-            
-            if 'max_depth' in base_params and base_params['max_depth'] is not None:
-                params['max_depth'] = trial.suggest_int('max_depth',
-                                                      max(5, base_params['max_depth'] - 5),
-                                                      base_params['max_depth'] + 10)
-            
-            params['min_impurity_decrease'] = trial.suggest_float('min_impurity_decrease', 0.0, 0.1)
-            params['class_weight'] = 'balanced_subsample'
-            
-            model = RandomForestClassifier(**params, random_state=42, n_jobs=1)
-            model.fit(X_train, y_train)
-            y_pred_proba = model.predict_proba(X_val)
-            return roc_auc_score(y_val, y_pred_proba[:, 1])
+                if 'n_estimators' in base_params:
+                    params['n_estimators'] = trial.suggest_int('n_estimators', 
+                                                             max(50, base_params['n_estimators'] - 50),
+                                                             base_params['n_estimators'] + 100)
+                
+                if 'max_depth' in base_params and base_params['max_depth'] is not None:
+                    params['max_depth'] = trial.suggest_int('max_depth',
+                                                          max(5, base_params['max_depth'] - 5),
+                                                          base_params['max_depth'] + 5)
+                
+                params['min_impurity_decrease'] = trial.suggest_float('min_impurity_decrease', 0.0, 0.05)
+                
+                model = RandomForestClassifier(**params, random_state=42, class_weight='balanced', n_jobs=1)
+                model.fit(X_train, y_train)
+                y_pred_proba = model.predict_proba(X_val)
+                return roc_auc_score(y_val, y_pred_proba[:, 1])
+                
+            elif model_name == 'ExtraTrees':
+                params = base_params.copy()
+                
+                if 'n_estimators' in base_params:
+                    params['n_estimators'] = trial.suggest_int('n_estimators',
+                                                             max(50, base_params['n_estimators'] - 50),
+                                                             base_params['n_estimators'] + 100)
+                
+                params['min_impurity_decrease'] = trial.suggest_float('min_impurity_decrease', 0.0, 0.05)
+                
+                model = ExtraTreesClassifier(**params, random_state=42, class_weight='balanced', n_jobs=1)
+                model.fit(X_train, y_train)
+                y_pred_proba = model.predict_proba(X_val)
+                return roc_auc_score(y_val, y_pred_proba[:, 1])
+                
+            elif model_name == 'BaggingClassifier':
+                params = base_params.copy()
+                
+                if 'n_estimators' in base_params:
+                    params['n_estimators'] = trial.suggest_int('n_estimators',
+                                                             max(10, base_params['n_estimators'] - 25),
+                                                             base_params['n_estimators'] + 50)
+                
+                try:
+                    base_estimator = DecisionTreeClassifier(random_state=42, class_weight='balanced')
+                    model = BaggingClassifier(estimator=base_estimator, **params, random_state=42, n_jobs=1)
+                except TypeError:
+                    base_estimator = DecisionTreeClassifier(random_state=42, class_weight='balanced')
+                    model = BaggingClassifier(base_estimator=base_estimator, **params, random_state=42, n_jobs=1)
+                
+                model.fit(X_train, y_train)
+                y_pred_proba = model.predict_proba(X_val)
+                return roc_auc_score(y_val, y_pred_proba[:, 1])
+                
+        except Exception as e:
+            print(f"Ошибка в objective для {model_name}: {e}")
+            return 0.0
     
-    study = optuna.create_study(
-        direction='maximize',
-        sampler=optuna.samplers.TPESampler(seed=42),
-        pruner=optuna.pruners.MedianPruner()
-    )
-    study.optimize(objective, n_trials=n_trials)
-    
-    return study.best_params, study.best_value
-
+    try:
+        study = optuna.create_study(
+            direction='maximize',
+            sampler=optuna.samplers.TPESampler(seed=42),
+            pruner=optuna.pruners.MedianPruner()
+        )
+        study.optimize(objective, n_trials=n_trials, timeout=300) 
+        
+        return study.best_params, study.best_value
+    except Exception as e:
+        print(f"Ошибка в optuna_fine_tune для {model_name}: {e}")
+        return {}, 0.0
 
 def train_and_evaluate_model(model_name):
     """Обучение и оценка одной модели"""
     start_time = time.time()
+    
+    try:
+        print(f"\n--- Начинаем обучение {model_name} ---")
 
-    if model_name == 'RandomForest':
-        model_class = RandomForestClassifier
-    elif model_name == 'ExtraTrees':
-        model_class = ExtraTreesClassifier
-    elif model_name == 'BaggingClassifier':
-        model_class = BaggingClassifier
-    elif model_name == 'BalancedRandomForest':
-        model_class = RandomForestClassifier
-    
-    base_params, base_score = fast_randomized_search(
-        model_name, model_class, param_distributions[model_name], n_iter=30
-    )
-    
-    print(f"{model_name} - Базовый результат: {base_score:.4f}")
-    
-    final_params, final_score = optuna_fine_tune(model_name, base_params, n_trials=50)
-    
-    final_params.update(base_params)
-    
-    print(f"{model_name} - Финальный результат: {final_score:.4f}")
-   
-    if model_name == 'RandomForest':
-        final_params['class_weight'] = 'balanced'
-        final_model = RandomForestClassifier(**final_params, random_state=42, n_jobs=N_JOBS)
-        final_model.fit(X_combined, y_combined)
+        if model_name == 'RandomForest':
+            model_class = RandomForestClassifier
+        elif model_name == 'ExtraTrees':
+            model_class = ExtraTreesClassifier
+        elif model_name == 'BaggingClassifier':
+            model_class = BaggingClassifier
+        else:
+            raise ValueError(f"Неизвестная модель: {model_name}")
         
-    elif model_name == 'ExtraTrees':
-        final_params['class_weight'] = 'balanced'
-        final_model = ExtraTreesClassifier(**final_params, random_state=42, n_jobs=N_JOBS)
-        final_model.fit(X_combined, y_combined)
-        
-    elif model_name == 'BaggingClassifier':
-        base_estimator = DecisionTreeClassifier(random_state=42, class_weight='balanced')
-        final_model = BaggingClassifier(
-            base_estimator=base_estimator, 
-            **final_params, 
-            random_state=42, 
-            n_jobs=N_JOBS
+        base_params, base_score = fast_randomized_search(
+            model_name, model_class, param_distributions[model_name], n_iter=15
         )
-        final_model.fit(X_combined, y_combined)
         
-    elif model_name == 'BalancedRandomForest':
-        final_params['class_weight'] = 'balanced_subsample'
-        final_model = RandomForestClassifier(**final_params, random_state=42, n_jobs=N_JOBS)
+        if base_score == 0.0:
+            print(f"Не удалось оптимизировать {model_name}")
+            return None
+        
+        print(f"{model_name} - Базовый результат: {base_score:.4f}")
+
+        final_params, final_score = optuna_fine_tune(model_name, base_params, n_trials=20)
+        
+        final_params.update(base_params)
+        
+        print(f"{model_name} - Финальный результат: {final_score:.4f}")
+
+        if model_name == 'RandomForest':
+            final_params['class_weight'] = 'balanced'
+            final_model = RandomForestClassifier(**final_params, random_state=42, n_jobs=N_JOBS)
+            
+        elif model_name == 'ExtraTrees':
+            final_params['class_weight'] = 'balanced'
+            final_model = ExtraTreesClassifier(**final_params, random_state=42, n_jobs=N_JOBS)
+            
+        elif model_name == 'BaggingClassifier':
+
+            try:
+                base_estimator = DecisionTreeClassifier(random_state=42, class_weight='balanced')
+                final_model = BaggingClassifier(
+                    estimator=base_estimator, 
+                    **final_params, 
+                    random_state=42, 
+                    n_jobs=N_JOBS
+                )
+            except TypeError:
+                base_estimator = DecisionTreeClassifier(random_state=42, class_weight='balanced')
+                final_model = BaggingClassifier(
+                    base_estimator=base_estimator, 
+                    **final_params, 
+                    random_state=42, 
+                    n_jobs=N_JOBS
+                )
+        
         final_model.fit(X_combined, y_combined)
-    
 
-    y_pred = final_model.predict(X_test)
-    y_pred_proba = final_model.predict_proba(X_test)
-    metrics = calculate_metrics(y_test, y_pred, y_pred_proba)
-    
-    elapsed_time = time.time() - start_time
-    print(f"{model_name} завершен за {elapsed_time:.1f} секунд")
-    
-    return {
-        'model': final_model,
-        'params': final_params,
-        'metrics': metrics,
-        'time': elapsed_time
-    }
+        y_pred = final_model.predict(X_test)
+        y_pred_proba = final_model.predict_proba(X_test)
+        metrics = calculate_metrics(y_test, y_pred, y_pred_proba)
+        
+        elapsed_time = time.time() - start_time
+        print(f"{model_name} завершен за {elapsed_time:.1f} секунд")
+        
+        return {
+            'model': final_model,
+            'params': final_params,
+            'metrics': metrics,
+            'time': elapsed_time
+        }
+        
+    except Exception as e:
+        elapsed_time = time.time() - start_time
+        print(f"Ошибка при обучении {model_name}: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
+        return {
+            'model': None,
+            'params': {},
+            'metrics': {},
+            'time': elapsed_time,
+            'error': str(e)
+        }
 
-def parallel_model_training():
-    """Параллельное обучение всех моделей"""
-    model_names = ['RandomForest', 'ExtraTrees', 'BaggingClassifier', 'BalancedRandomForest']
+def sequential_model_training():
+    """Последовательное обучение всех моделей"""
+    model_names = ['RandomForest', 'ExtraTrees', 'BaggingClassifier']
     
-    print("Начинаем параллельное обучение всех моделей случайного леса...")
+    print("Начинаем последовательное обучение всех моделей...")
     total_start_time = time.time()
     
-    with ThreadPoolExecutor(max_workers=min(len(model_names), N_JOBS)) as executor:
-        future_to_model = {executor.submit(train_and_evaluate_model, name): name 
-                          for name in model_names}
+    results = {}
+    
+    for model_name in model_names:
+        print(f"\n{'='*50}")
+        print(f"Обучение модели: {model_name}")
+        print(f"{'='*50}")
         
-        results = {}
-        for future in future_to_model:
-            model_name = future_to_model[future]
-            try:
-                result = future.result()
-                results[model_name] = result
-            except Exception as exc:
-                print(f'{model_name} generated an exception: {exc}')
+        result = train_and_evaluate_model(model_name)
+        if result is not None:
+            results[model_name] = result
+        else:
+            print(f"Пропускаем {model_name} из-за ошибки")
     
     total_time = time.time() - total_start_time
     print(f"\nВсе модели обучены за {total_time:.1f} секунд")
     
     return results
 
-# Запуск обучения
 if __name__ == "__main__":
-    results = parallel_model_training()
+    results = sequential_model_training()
     
-    # Вывод результатов
+    if not results:
+        print("Не удалось обучить ни одной модели!")
+        exit(1)
+
     print("\n" + "="*70)
-    print("РЕЗУЛЬТАТЫ ВСЕХ МОДЕЛЕЙ СЛУЧАЙНОГО ЛЕСА")
+    print("РЕЗУЛЬТАТЫ ВСЕХ МОДЕЛЕЙ")
     print("="*70)
     
     for model_name, result in results.items():
-        print_results(model_name, result['metrics'])
-        print(f"  Время обучения: {result['time']:.1f}с")
+        if 'error' in result:
+            print(f"\n{model_name}: ОШИБКА - {result['error']}")
+        else:
+            print_results(model_name, result['metrics'])
+            print(f"  Время обучения: {result['time']:.1f}с")
     
-    # Создание сравнительной таблицы
+
     comparison_data = []
     for model_name, result in results.items():
-        row = {'Model': model_name, 'Time': result['time']}
-        row.update(result['metrics'])
-        comparison_data.append(row)
+        if 'error' not in result and result['metrics']:
+            row = {'Model': model_name, 'Time': result['time']}
+            row.update(result['metrics'])
+            comparison_data.append(row)
     
-    comparison_df = pd.DataFrame(comparison_data)
-    print(f"\n{comparison_df.round(4)}")
-    
+    if comparison_data:
+        comparison_df = pd.DataFrame(comparison_data)
+        print(f"\n{comparison_df.round(4)}")
 
-    best_auc_idx = comparison_df['auc_roc'].idxmax()
-    best_f1_idx = comparison_df['f1'].idxmax()
-    best_mcc_idx = comparison_df['mcc'].idxmax()
-    
-    best_auc_model = comparison_df.loc[best_auc_idx, 'Model']
-    best_f1_model = comparison_df.loc[best_f1_idx, 'Model']
-    best_mcc_model = comparison_df.loc[best_mcc_idx, 'Model']
-    
-    print(f"\nЛучшие модели:")
-    print(f"  По AUC-ROC: {best_auc_model} ({comparison_df.loc[best_auc_idx, 'auc_roc']:.4f})")
-    print(f"  По F1-score: {best_f1_model} ({comparison_df.loc[best_f1_idx, 'f1']:.4f})")
-    print(f"  По MCC: {best_mcc_model} ({comparison_df.loc[best_mcc_idx, 'mcc']:.4f})")
-    
+        if len(comparison_df) > 0:
+            best_auc_idx = comparison_df['auc_roc'].idxmax()
+            best_model_name = comparison_df.loc[best_auc_idx, 'Model']
+            best_auc_score = comparison_df.loc[best_auc_idx, 'auc_roc']
+            
+            print(f"\nЛучшая модель по AUC-ROC: {best_model_name} ({best_auc_score:.4f})")
 
-    print("\n" + "="*70)
-    print("СОХРАНЕНИЕ РЕЗУЛЬТАТОВ")
-    print("="*70)
-    
-    for model_name, result in results.items():
+            if best_model_name in results and results[best_model_name]['model'] is not None:
+                print(f"\nДетальный отчет для лучшей модели ({best_model_name}):")
+                best_model = results[best_model_name]['model']
+                y_test_pred_best = best_model.predict(X_test)
+                print(classification_report(y_test, y_test_pred_best, target_names=['Class 0', 'Class 1']))
 
-        model_filename = f'optimized_{model_name.lower()}_model.joblib'
-        joblib.dump(result['model'], model_filename)
+        print("\n" + "="*70)
+        print("СОХРАНЕНИЕ РЕЗУЛЬТАТОВ")
+        print("="*70)
         
-        # Сохранение параметров
-        params_filename = f'optimized_{model_name.lower()}_params.joblib'
-        joblib.dump(result['params'], params_filename)
+        for model_name, result in results.items():
+            if 'error' not in result and result['model'] is not None:
+
+                model_filename = f'optimized_{model_name.lower()}_model.joblib'
+                joblib.dump(result['model'], model_filename)
+                
+                params_filename = f'optimized_{model_name.lower()}_params.joblib'
+                joblib.dump(result['params'], params_filename)
+                
+                print(f"{model_name}: модель -> {model_filename}, параметры -> {params_filename}")
         
-        print(f"{model_name}: модель -> {model_filename}, параметры -> {params_filename}")
-    
-    comparison_df.to_csv('optimized_random_forest_models_comparison.csv', index=False)
-    print("Сравнительная таблица сохранена в optimized_random_forest_models_comparison.csv")
-    
-    print(f"\nДетальный отчет для лучшей модели по AUC-ROC ({best_auc_model}):")
-    best_model = results[best_auc_model]['model']
-    y_test_pred_best = best_model.predict(X_test)
-    print(classification_report(y_test, y_test_pred_best, target_names=['Class 0', 'Class 1']))
-    
-    if hasattr(best_model, 'feature_importances_'):
-        feature_importance = pd.DataFrame({
-            'feature': X_combined.columns,
-            'importance': best_model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
-        print(f"\nТоп-15 важных признаков ({best_auc_model}):")
-        print(feature_importance.head(15))
-        
-        feature_importance.to_csv(f'feature_importance_{best_auc_model.lower()}.csv', index=False)
-        
-        print(f"\nСтатистика важности признаков:")
-        print(f"  Среднее: {feature_importance['importance'].mean():.4f}")
-        print(f"  Медиана: {feature_importance['importance'].median():.4f}")
-        print(f"  Стандартное отклонение: {feature_importance['importance'].std():.4f}")
-        print(f"  Количество признаков с важностью > 0.01: {(feature_importance['importance'] > 0.01).sum()}")
-    
-    print(f"\nДополнительная информация о моделях:")
-    for model_name, result in results.items():
-        model = result['model']
-        print(f"\n{model_name}:")
-        
-        if hasattr(model, 'n_estimators'):
-            print(f"  Количество деревьев: {model.n_estimators}")
-        
-        if hasattr(model, 'max_depth'):
-            print(f"  Максимальная глубина: {model.max_depth}")
-        
-        if hasattr(model, 'min_samples_split'):
-            print(f"  Минимальные образцы для разделения: {model.min_samples_split}")
-        
-        if hasattr(model, 'min_samples_leaf'):
-            print(f"  Минимальные образцы в листе: {model.min_samples_leaf}")
-        
-        if hasattr(model, 'max_features'):
-            print(f"  Максимальные признаки: {model.max_features}")
-        
-        if hasattr(model, 'oob_score_') and model.oob_score is True:
-            print(f"  OOB Score: {model.oob_score_:.4f}")
+        comparison_df.to_csv('optimized_models_comparison.csv', index=False)
+        print("Сравнительная таблица сохранена в optimized_models_comparison.csv")
     
     print(f"\nОбщее время выполнения: {sum(r['time'] for r in results.values()):.1f} секунд")
-    print("Все операции завершены успешно!")
-    
-
-    print(f"\n" + "="*70)
-    print("СРАВНЕНИЕ С БАЗОВЫМИ МОДЕЛЯМИ")
-    print("="*70)
-    
-    baseline_results = {}
-    baseline_models = {
-        'BaselineRandomForest': RandomForestClassifier(random_state=42, class_weight='balanced', n_jobs=N_JOBS),
-        'BaselineExtraTrees': ExtraTreesClassifier(random_state=42, class_weight='balanced', n_jobs=N_JOBS)
-    }
-    
-    for name, model in baseline_models.items():
-        start_time = time.time()
-        model.fit(X_combined, y_combined)
-        y_pred = model.predict(X_test)
-        y_pred_proba = model.predict_proba(X_test)
-        metrics = calculate_metrics(y_test, y_pred, y_pred_proba)
-        elapsed_time = time.time() - start_time
-        
-        baseline_results[name] = {
-            'metrics': metrics,
-            'time': elapsed_time
-        }
-        
-        print_results(name, metrics)
-        print(f"  Время обучения: {elapsed_time:.1f}с")
-    
-    print(f"\nУлучшения после оптимизации:")
-    if 'RandomForest' in results and 'BaselineRandomForest' in baseline_results:
-        rf_improvement = results['RandomForest']['metrics']['auc_roc'] - baseline_results['BaselineRandomForest']['metrics']['auc_roc']
-        print(f"  RandomForest AUC-ROC: +{rf_improvement:.4f}")
-    
-    if 'ExtraTrees' in results and 'BaselineExtraTrees' in baseline_results:
-        et_improvement = results['ExtraTrees']['metrics']['auc_roc'] - baseline_results['BaselineExtraTrees']['metrics']['auc_roc']
-        print(f"  ExtraTrees AUC-ROC: +{et_improvement:.4f}")
+    print("Операции завершены!")
