@@ -1,7 +1,5 @@
 from django.db import models
 
-# Create your models here.
-
 class Project(models.Model):
     name = models.CharField(max_length=200, verbose_name="Название проекта")
     blurb = models.TextField(verbose_name="Краткое описание")
@@ -14,8 +12,6 @@ class Project(models.Model):
     launch_date = models.DateField(verbose_name="Дата запуска")
     launch_time = models.TimeField(verbose_name="Время запуска")
     description = models.TextField(verbose_name="Текстовое описание")
-    # Здесь мы используем TextField для ссылок на изображения, т.к. их может быть несколько.
-    # Если бы была только одна основная картинка, использовали бы ImageField.
     images = models.TextField(
         blank=True, verbose_name="Ссылки на изображения проекта (через запятую)"
     )
@@ -26,6 +22,4 @@ class Project(models.Model):
         verbose_name_plural = "Проекты"
 
     def __str__(self):
-        # Эта строка должна ВСЕГДА возвращать строку.
-        # Если name не существует, это может вызвать ошибку, но обычно name есть.
         return self.name
