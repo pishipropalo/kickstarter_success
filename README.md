@@ -70,7 +70,7 @@
 
 ### Сводная таблица результатов моделей:
 
-| Model                      | Accuracy | F1 (weighted) | AUC-ROC | AUC-PR | MCC    | Time (seconds) |
+| Model                      | Accuracy | F1 | AUC-ROC | AUC-PR | MCC    | Time (seconds) |
 | :------------------------- | :------- | :------------ | :------ | :----- | :----- | :------------- |
 | Baseline (Majority Class)  | 0.6514   | 0.0000        | 0.5000  | 0.3486 | 0.0000 | 0              |
 | LogisticRegression         | 0.8176   | 0.8199        | 0.8799  | 0.8149 | 0.6046 | 534.6          |
