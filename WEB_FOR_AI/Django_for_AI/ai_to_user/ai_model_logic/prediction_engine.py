@@ -91,7 +91,7 @@ def analyze_image(url):
 
 
 try:
-    model_path = 'classification/boosting/optimized_xgboost_model.joblib'
+    model_path = 'classification/boosting/optimized_lightgbm_model.joblib'
     model = joblib.load(model_path)
 
     print("Модель и необходимые компоненты успешно загружены.")
