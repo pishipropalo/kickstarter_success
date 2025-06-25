@@ -27,13 +27,13 @@ class ProjectPredictionForm(forms.Form):
     campaign_days = forms.IntegerField(
         label="Длительность кампании (дней)",
         min_value=1,
-        max_value=100000000, # Большинство платформ ограничивают до 60 дней, но можно изменить по желанию
+        max_value=100000000, 
         widget=forms.NumberInput(attrs={'placeholder': 'Например, 30, 45'}),
         help_text="Сколько дней будет длиться ваша краудфандинговая кампания."
     )
     prelaunch_activated = forms.BooleanField(
         label="Предстартовая кампания активирована?",
-        required=False, # Чекбокс необязателен
+        required=False, 
         help_text="Отметьте, если планируете проводить предстартовую кампанию."
     )
     creation_date = forms.DateField(
