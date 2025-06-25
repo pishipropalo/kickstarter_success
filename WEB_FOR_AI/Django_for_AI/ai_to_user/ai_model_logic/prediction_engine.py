@@ -9,7 +9,6 @@ import cv2
 import re
 from urllib.parse import urlparse, parse_qs
 
-# Функции для обработки изображений (остаются без изменений)
 def get_image_characteristics(image_url):
     try:
         headers = {
